@@ -5,6 +5,8 @@
 // There are no licensing restrictions associated with this example.
 
 
+/// TLK 4/1/2024  -  Addes support for N-series network.  Also mods to PMDMemorory.cs and PMDSetup.cs.
+
 ///  SCARA TLK 10/06/2021 
 /// 
 /// This example demonstrates the simulation and control path implentation of a SCARA robot.
@@ -33,6 +35,8 @@ using System.Windows.Forms;
 using System.Threading;
 using PMDLibrary;
 using SCARA;
+using static PMDLibrary.PMD;
+
 
 
 namespace SCARA_Example
@@ -75,11 +79,11 @@ namespace SCARA_Example
                 y0pixel = pictureBox1.Height/2;
 
                 // When using a set of single axis products like the DK58113 the arcitecture is distributed 
-                //Sparky = new Scarabot(6.0, 4.0,ArchitectureType.Distributed);
+                Sparky = new Scarabot(6.0, 4.0,ArchitectureType.DistributedNseries);
 
 
-                // When using a mulit-axis product like the Prodigy Machine Controller the arcitecture is distributed 
-                Sparky = new Scarabot(6.0, 4.0, ArchitectureType.Centralized);
+                // When using a mulit-axis product like the Prodigy Machine Controller the arcitecture is centralized 
+                //Sparky = new Scarabot(6.0, 4.0, ArchitectureType.Centralized);
 
                 home_x = 8.0;
                 home_y = 4.0;
@@ -128,12 +132,14 @@ namespace SCARA_Example
             public ScaraAxis(PMD.PMDDevice dev, PMD.PMDAxisNumber axisNumber, double scalar, ArchitectureType architecture) : base(dev, axisNumber)
             {
                 EncoderScalar = scalar;
-                if (architecture == ArchitectureType.Distributed) shared = false;
-                else shared = true;
+                if (architecture == ArchitectureType.Centralized) shared = true;
+                else shared = false;
                 try
                 {
-                    SetupAxis();
+                    PMDSetup mtrsetup = new PMDSetup();
+                    mtrsetup.DoNSeriesSetup(this);//        SetupAxis();
                     path = new UDPM(dev, this, shared, maxpoints);
+                   
                     switch ((int)axisNumber)
                     {
                         case 0:
@@ -208,6 +214,7 @@ namespace SCARA_Example
         {
             Centralized = 0,
             Distributed = 1,
+            DistributedNseries=2,
         }
 
         public class Scarabot
@@ -224,9 +231,9 @@ namespace SCARA_Example
             public PMD.PMDAxis testaxis;
             public ScaraAxis Shoulder;
             public ScaraAxis Elbow;
-            static PMD.PMDDevice devMC,devMCShoulder,devMCElbow;
-            static PMD.PMDPeripheral perTCP;
-            static PMD.PMDPeripheral perSERShoulder,perSERElbow;
+            public PMD.PMDDevice devMC,devMCShoulder,devMCElbow,NseriesMaster,NseriesNode1;
+            public PMD.PMDPeripheral perTCP,perCAN,IO;
+            public PMD.PMDPeripheral perSERShoulder,perSERElbow;
             public static volatile PMD.PMDAxis test;
             public double cycletime;
             public bool DeviceConnect = false;
@@ -259,10 +266,10 @@ namespace SCARA_Example
                     // An assumption is made here that Disributed means Device Type Motion Processor.
                     if (Architecture==ArchitectureType.Distributed)
                     {
-                        perSERShoulder = new PMD.PMDPeripheralCOM(11, 57600, PMD.PMDSerialParity.None, PMD.PMDSerialStopBits.SerialStopBits1);
+                        perSERShoulder = new PMD.PMDPeripheralSerial(11, 57600, PMD.PMDSerialParity.None, PMD.PMDSerialStopBits.SerialStopBits1);
                         devMCShoulder = new PMD.PMDDevice(perSERShoulder, PMD.PMDDeviceType.MotionProcessor);
 
-                        perSERElbow = new PMD.PMDPeripheralCOM(2, 57600, PMD.PMDSerialParity.None, PMD.PMDSerialStopBits.SerialStopBits1);
+                        perSERElbow = new PMD.PMDPeripheralSerial(2, 57600, PMD.PMDSerialParity.None, PMD.PMDSerialStopBits.SerialStopBits1);
                         devMCElbow = new PMD.PMDDevice(perSERElbow, PMD.PMDDeviceType.MotionProcessor);
 
                         Shoulder = new ScaraAxis(devMCShoulder, PMD.PMDAxisNumber.Axis1, -1, ArchitectureType.Distributed);
@@ -275,12 +282,14 @@ namespace SCARA_Example
                         Thread.Sleep(1);
                         Shoulder.SynchronizationMode = PMD.PMDSynchronizationMode.Master;
                         // The two axes are now in sync
+
+                        MessageBox.Show("Connected to Synchorinzed DK58113 Network");
                         return PMD.PMDResult.ERR_OK;
                     }
                     
                     
                     // An assumption is make here that Centralized means Device Type PRP. 
-                    else  // Connect to a 2Axis EtherNet conntroller using PRP protocol.  For example a PMD Machine Controller
+                    else if (Architecture == ArchitectureType.Centralized)  // Connect to a 2Axis EtherNet conntroller using PRP protocol.  For example a PMD Machine Controller
                     {
 
                         perTCP = new PMD.PMDPeripheralTCP(System.Net.IPAddress.Parse(ipaddress), 40100, 1000);
@@ -294,7 +303,50 @@ namespace SCARA_Example
                         DeviceConnect = true;
                         return PMD.PMDResult.ERR_OK;
                     }
-                    
+
+                    // N-series is a one axis device that uses PRP . 
+                    else  // Connect to an Ethernet N-series with another N-series attached via CAN bus and synchronized.
+                          // Synchronization requires that SyncOut on the Master N-series is connected to SyncIn on the the attached N-series (Node1).
+                        
+                    {
+
+                        perTCP = new PMD.PMDPeripheralTCP(System.Net.IPAddress.Parse(ipaddress), 40100, 1000);
+                        NseriesMaster = new PMD.PMDDevice(perTCP, PMD.PMDDeviceType.ResourceProtocol);
+                        
+                        Shoulder = new ScaraAxis(NseriesMaster, PMD.PMDAxisNumber.Axis1, -1, ArchitectureType.DistributedNseries);
+                                               
+                        uint Index = 1;   // In this case the attached N-series is Node ID 1.
+                        perCAN = new PMDPeripheralCAN(ref NseriesMaster, 0x600 + Index, 0x580 + Index, 0x180 + Index);
+                        NseriesNode1 = new PMDDevice(perCAN, PMDDeviceType.ResourceProtocol); // H1002: Version error from PMDDeviceNoOperation in PMDLibrary
+                        Elbow = new ScaraAxis(NseriesNode1, PMD.PMDAxisNumber.Axis1, -1, ArchitectureType.DistributedNseries);
+
+                        // Initialize syncrhonization between Shoulder and Elbow
+                        //Configure pin 37 for SyncOut
+                        IO = new PMDPeripheralPIO(NseriesMaster, 0, 0, PMDDataSize.Size16Bit);
+                        IO.Write(0x1000, 0x228);
+                        Shoulder.SynchronizationMode = PMD.PMDSynchronizationMode.Disabled;
+                        Elbow.SynchronizationMode = PMD.PMDSynchronizationMode.Slave;
+                        Thread.Sleep(1);
+                        Shoulder.SynchronizationMode = PMD.PMDSynchronizationMode.Master;
+
+                        // If GetTime on Slave returns zero than sync has failed.
+                        var synctest = Elbow.Time;
+                        if (synctest == 0)
+                        {
+                            MessageBox.Show("Slave is not Synchorinzed!!!");
+                            return PMD.PMDResult.ERR_InterfaceNotInitialized;
+                        }
+                                                
+                        // The two axes are now in sync
+                        cycletime = Shoulder.SampleTime * 0.000001;
+                        
+                        DeviceConnect = true;
+                        MessageBox.Show("Connected to Synchorinzed N-series Network");
+                        return PMD.PMDResult.ERR_OK;
+
+
+                    }
+
 
                 }
                 catch (Exception e)
@@ -303,8 +355,7 @@ namespace SCARA_Example
                     return PMD.PMDResult.ERR_OpeningPort;
 
                 }
-
-              
+                         
 
             }
 
@@ -312,20 +363,40 @@ namespace SCARA_Example
             {
                 try
                 {
-                    if ((this.Shoulder == null) == false) this.Shoulder.Close();
-                    if ((this.Elbow == null) == false) this.Elbow.Close();
-                    
-                    if ((devMC == null) == false) devMC.Close();
-                    if ((devMCShoulder == null) == false) devMCShoulder.Close();
-                    if ((devMCElbow == null) == false) devMCElbow.Close();
-                    
-                    if ((perTCP == null) == false) perTCP.Close();
-                    if ((perSERShoulder == null) == false) perSERShoulder.Close();
-                    if ((perSERElbow == null) == false) perSERElbow.Close();
-                    
+                    if (Architecture == ArchitectureType.DistributedNseries)
+                    {
+                        if ((this.Elbow == null) == false) this.Elbow.Close();
+                        if ((this.NseriesNode1==null) == false) this.NseriesNode1.Close();
+                        if ((this.perCAN==null)==false) this.perCAN.Close();
+                        if ((this.Shoulder == null) == false) this.Shoulder.Close();
+
+                        if ((this.IO==null)==false) this.IO.Close();
+                        if ((this.NseriesMaster==null)==false) this.NseriesMaster.Close();
+                        if ((this.perTCP == null) == false) this.perTCP.Close();
+                    }
+                    else
+                    {
+                        if ((this.Shoulder == null) == false) this.Shoulder.Close();
+                        if ((this.Elbow == null) == false) this.Elbow.Close();
+
+                        if ((this.devMC == null) == false) this.devMC.Close();
+                        if ((this.devMCShoulder == null) == false) this.devMCShoulder.Close();
+                        if ((this.devMCElbow == null) == false) this.devMCElbow.Close();
+
+                        if ((this.perTCP == null) == false) this.perTCP.Close();
+                        if ((this.perSERShoulder == null) == false) this.perSERShoulder.Close();
+                        if ((this.perSERElbow == null) == false) this.perSERElbow.Close();
+
+                        if ((this.perTCP == null) == false) this.perTCP.Close();
+                        if ((this.perSERShoulder == null) == false) this.perSERShoulder.Close();
+                        if ((this.perSERElbow == null) == false) this.perSERElbow.Close();
+                    }
+
+
                     DeviceConnect = false;
                     return PMD.PMDResult.ERR_OK;
                 }
+
                 catch (Exception e)
                 {
                     MessageBox.Show(e.Message);
@@ -333,7 +404,7 @@ namespace SCARA_Example
 
                 }
 
-            }
+        }
 
             public bool IsSynced()
             {
@@ -1131,6 +1202,7 @@ namespace SCARA_Example
             timerstop = true;
             Sparky.Disconnect();
             this.Close();
+            System.Environment.Exit(0);
         }
 
 
