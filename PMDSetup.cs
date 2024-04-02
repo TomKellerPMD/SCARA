@@ -90,7 +90,7 @@ class PMDSetup
         {
             try
             {
-
+                PMD.PMDAxis Atlas = axis.AtlasAxis();
                 axis.SampleTime = 256;
                 axis.SPIMode = 0;
                 axis.SetEventAction(PMD.PMDEventActionEvent.Immediate, PMD.PMDEventAction.DisableMotorOutputAndHigherModules);
@@ -98,6 +98,8 @@ class PMDSetup
                 axis.MotorType = PMD.PMDMotorType.BrushlessDC3Phase;
                 axis.OutputMode = PMD.PMDOutputMode.Atlas;
                 this.WaitForAtlasToConnect(axis);
+                Atlas.MotorType = PMD.PMDMotorType.BrushlessDC3Phase;
+                axis.OutputMode = PMD.PMDOutputMode.Atlas;
                 axis.PositionErrorLimit = 65535;
                 axis.SettleTime = 50;
                 axis.SettleWindow = 1000;
@@ -150,10 +152,10 @@ class PMDSetup
                 axis.SetFOC(PMD.PMDFOC.Both, PMD.PMDFOCParameter.Ki, 40);
                 axis.SetFOC(PMD.PMDFOC.Both, PMD.PMDFOCParameter.Ilimit, 16000);
                 axis.SetAxisOutMask(PMD.PMDAxisNumber.Axis1, PMD.PMDAxisOutRegister.None, 0x0000, 0x0000);
-                axis.SetDriveFaultParameter(PMD.PMDDriveFaultParameter.OvervoltageLimit, 44085);
+                axis.SetDriveFaultParameter(PMD.PMDDriveFaultParameter.OvervoltageLimit, 30000);
                 axis.SetDriveFaultParameter(PMD.PMDDriveFaultParameter.UndervoltageLimit, 7947);
                 axis.SetCurrentFoldback(0, 5242);
-                axis.SetCurrentFoldback(1, 582);
+                axis.SetCurrentFoldback(1, 490);
                 axis.SetEventAction(PMD.PMDEventActionEvent.PositiveLimit, PMD.PMDEventAction.AbruptStopWithPositionErrorClear);
                 axis.SetEventAction(PMD.PMDEventActionEvent.NegativeLimit, PMD.PMDEventAction.AbruptStopWithPositionErrorClear);
                 axis.SetEventAction(PMD.PMDEventActionEvent.MotionError, PMD.PMDEventAction.DisablePositionLoopAndHigherModules);
@@ -164,9 +166,11 @@ class PMDSetup
                 //axis.FaultOutMask=0x0861;
                 axis.Update();
                 axis.InitializePhase();
-               // axis.SetCurrent(PMD.PMDCurrent.DriveCurrent, 3000);
-                //axis.SetCurrent(PMD.PMDCurrent.HoldingCurrent, 3000);
-                //axis.SetCurrent(PMD.PMDCurrent.Delay, 1000);
+            // axis.SetCurrent(PMD.PMDCurrent.DriveCurrent, 3000);
+            //axis.SetCurrent(PMD.PMDCurrent.HoldingCurrent, 3000);
+            //axis.SetCurrent(PMD.PMDCurrent.Delay, 1000);
+                //axis.ClearDriveFaultStatus();
+                axis.ResetEventStatus(0);
                 axis.OperatingMode = (ushort)PMD.PMDOperatingMode.AllEnabled;
                 axis.ClearPositionError();
                 axis.ActualPosition = 0;
